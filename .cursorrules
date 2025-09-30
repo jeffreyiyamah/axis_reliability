@@ -1,0 +1,21 @@
+# .cursorrules (place in axis_reliability/ directory)
+
+This is a ROS 2 Humble project using Python 3.10.
+
+CRITICAL RULES:
+- Only use APIs that exist in ROS 2 Humble documentation: https://docs.ros.org/en/humble/
+- Before using any message type, verify it exists at: https://docs.ros.org/en/humble/p/[package]/
+- sensor_msgs/NavSatFix does NOT have an hdop field (it has position_covariance)
+- Use tf_transformations for quaternion math, not tf2 (Python binding differences)
+- Time arithmetic: (Time - Time).nanoseconds returns int64, divide by 1e9 for seconds
+
+STYLE:
+- Add type hints to all function signatures
+- Use rclpy.node.Node as base class
+- Log with self.get_logger().info/warn/error
+- Parameters must be declared with self.declare_parameter() before use
+
+VERIFICATION:
+- If unsure about any ROS 2 API, state: "VERIFY: [method] in [package]"
+- Never invent field names or methods
+- Prefer verbose, explicit code over clever shortcuts

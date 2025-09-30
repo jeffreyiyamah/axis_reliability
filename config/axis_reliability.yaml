@@ -1,0 +1,19 @@
+axis_reliability:
+  ros__parameters:
+    # GPS validation
+    n_bad_gps_threshold: 10          # consecutive bad GPS to trigger fallback
+    m_good_gps_threshold: 5          # consecutive good GPS to trigger recovery
+    gps_age_max_s: 2.0               # max message age before considered stale
+
+    # Fallback behavior
+    fallback_linear_velocity: 0.3    # m/s during dead reckoning
+    fallback_max_duration_s: 30.0    # safety timeout
+    heading_correction_kp: 0.5       # proportional gain for heading
+    max_angular_correction: 0.1      # rad/s max correction
+
+    # Recovery
+    recovery_blend_duration_s: 2.5   # seconds to blend back to nav
+
+    # Logging
+    enable_csv_logging: true
+    log_directory: "/tmp/axis_logs"
