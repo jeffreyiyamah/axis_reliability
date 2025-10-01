@@ -45,37 +45,59 @@ Robots stop or veer off course when GPS drops out.
 - [Optional] `ros2bag`, `matplotlib` for analysis
 
 **Clone and build:**
-```bash
 cd ~/ros2_ws/src
 git clone https://github.com/your-org/axis_reliability.git
 cd ~/ros2_ws
 colcon build --packages-select axis_reliability
 source install/setup.bash
-```
+
 
 ---
 
 ## Testing Without a Robot
 
 **Generate synthetic test data:**
-```bash
 ros2 run axis_reliability generate_test_data --record
-```
+
 This runs a 30s scenario with GPS dropouts and records a bag.
 
 **Analyze the results:**
-```bash
 ros2 run axis_reliability analyze_bag test_run/
-```
+
 **Expected output:**
 - Terminal summary of state durations and velocity stats
 - `axis_analysis.png` plot showing state transitions and velocities
 
 **Run unit tests:**
-```bash
 colcon test --packages-select axis_reliability
 colcon test-result --verbose
-```
+
+---
+
+## Accessing Logs and Data
+
+All logs and recordings are stored inside the Docker container. To retrieve them:
+
+**Copy CSV logs:**
+docker cp ros2_dev:/tmp/axis_logs/axis_reliability_log.csv ~/Desktop/
+
+**Copy rosbag recording:**
+docker cp ros2_dev:/root/ros2_ws/test_run ~/Desktop/
+
+**Copy visualization plot:**
+docker cp ros2_dev:/root/ros2_ws/axis_analysis.png ~/Desktop/
+
+**Copy everything at once:**
+
+docker cp ros2_dev:/tmp/axis_logs ~/Desktop/axis_logs
+docker cp ros2_dev:/root/ros2_ws/test_run ~/Desktop/test_run
+docker cp ros2_dev:/root/ros2_ws/axis_analysis.png ~/Desktop/
+
+**View ROS2 system logs inside Docker:**
+
+docker exec -it ros2_dev bash
+ls ~/.ros/log/
+
 
 ---
 
