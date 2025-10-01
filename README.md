@@ -28,7 +28,7 @@ Robots stop or veer off course when GPS drops out.
 - Blends back to navigation commands on GPS recovery
 - State transitions are visible and logged
 
-![State transitions and velocity plot](docs/axis_analysis.png)
+![State transitions and velocity plot](./axis_analysis.png)
 
 - **Green:** NORMAL (GPS OK, following nav)
 - **Red:** FALLBACK (dead reckoning, GPS lost)
@@ -226,4 +226,4 @@ Apache 2.0
 
 ## Contact
 
-For help, open an issue on GitHub or email the maintainer at [your.email@example.com](mailto:your.email@example.com).
+For help, open an issue on GitHub or email the maintainer at [jri8@cornell.edu](mailto:jri@cornell.edu).
