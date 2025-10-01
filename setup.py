@@ -1,4 +1,6 @@
 from setuptools import setup
+from glob import glob
+import os
 
 package_name = 'axis_reliability'
 
@@ -11,6 +13,7 @@ setup(
         ('share/' + package_name, ['package.xml']),
         ('share/' + package_name + '/launch', ['launch/axis_demo.launch.py']),
         ('share/' + package_name + '/config', ['config/axis_reliability.yaml']),
+        ('share/' + package_name + '/scripts', glob('scripts/*.py')),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -22,6 +25,9 @@ setup(
     entry_points={
         'console_scripts': [
             'axis_reliability = axis_reliability.axis_reliability_node:main',
+            'generate_test_data = axis_reliability.generate_test_bag:main',
+            'analyze_bag = axis_reliability.analyze_bag:main',
         ],
     },
 )
+
