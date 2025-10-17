@@ -7,7 +7,7 @@ axis_reliability:
 
     # Fallback behavior
     fallback_linear_velocity: 0.3    # m/s during dead reckoning
-    fallback_max_duration_s: 30.0    # safety timeout
+    fallback_max_duration_s: 60.0    # safety timeout
     heading_correction_kp: 0.5       # proportional gain for heading
     max_angular_correction: 0.1      # rad/s max correction
 
@@ -17,5 +17,7 @@ axis_reliability:
     # Logging
     enable_csv_logging: true
     log_directory: "/tmp/axis_logs"
+
+
 
 

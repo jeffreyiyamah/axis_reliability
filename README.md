@@ -1,251 +1,224 @@
 # axis_reliability
 
-ROS2 module that maintains robot motion during GPS dropouts using IMU and odometry.
+**ROS 2 Package for Reliable Navigation Under GPS Dropout**
 
----
-
-## Problem & Solution
-
-**The Problem:**  
-Autonomous robots often rely on GPS for navigation. However, GPS signals can be lost or degraded due to urban canyons, tunnels, or interference. When this happens, robots may stop, drift, or behave unpredictably—jeopardizing safety and mission success.
-
-**The Solution:**  
-`axis_reliability` detects GPS dropouts in real time, automatically switches to dead reckoning using IMU and odometry, and maintains safe, controlled motion. When GPS returns, it blends navigation commands smoothly back to normal operation—minimizing disruptions and risk.
-
-**Result:**  
-In a 30-second synthetic test with 15s GPS dropout, maintained 0.3 m/s forward velocity 
-(vs 0.0 m/s baseline) with <3m lateral drift. Smooth 2.5s recovery blend to normal operation.
-
----
-
-## Demo
-
-**Before:**  
-Robots stop or veer off course when GPS drops out.
-
-**After (with axis_reliability):**  
-- Maintains forward motion during GPS loss (fallback)
-- Blends back to navigation commands on GPS recovery
-- State transitions are visible and logged
-
-![State transitions and velocity plot](docs/axis_analysis.png)
-
-- **Green:** NORMAL (GPS OK, following nav)
-- **Red:** FALLBACK (dead reckoning, GPS lost)
-- **Yellow:** RECOVERY (blending back to nav)
+`axis_reliability` monitors GPS, IMU, and odometry data to maintain stable navigation when GPS becomes unreliable. It detects GPS loss, switches to dead-reckoning (FALLBACK) using IMU and velocity commands, and transitions back to GPS-based control (RECOVERY) once GPS returns.
 
 ---
 
 ## Installation
 
-**Prerequisites:**
-- ROS 2 Humble
-- Python 3.10+
-- `colcon` build system
-- [Optional] `ros2bag`, `matplotlib` for analysis
+### Prerequisites
 
-**Clone and build:**
+- **ROS 2 Humble** installed and sourced
+- `colcon` build tools
+- Python 3
+- (Optional) `turtlebot3_gazebo` if you want to use the included simulation world
+
+### Clone & Build
+
+```bash
 cd ~/ros2_ws/src
-git clone https://github.com/your-org/axis_reliability.git
+git clone https://github.com/jeffreyiyamah/axis_reliability.git
+
 cd ~/ros2_ws
 colcon build --packages-select axis_reliability
-source install/setup.bash
-
-
----
-
-## Testing Without a Robot
-
-**Generate synthetic test data:**
-ros2 run axis_reliability generate_test_data --record
-
-This runs a 30s scenario with GPS dropouts and records a bag.
-
-**Analyze the results:**
-ros2 run axis_reliability analyze_bag test_run/
-
-**Expected output:**
-- Terminal summary of state durations and velocity stats
-- `axis_analysis.png` plot showing state transitions and velocities
-
-**Run unit tests:**
-colcon test --packages-select axis_reliability
-colcon test-result --verbose
-
----
-
-## Accessing Logs and Data
-
-All logs and recordings are stored inside the Docker container. To retrieve them:
-
-**Copy CSV logs:**
-docker cp ros2_dev:/tmp/axis_logs/axis_reliability_log.csv ~/Desktop/
-
-**Copy rosbag recording:**
-docker cp ros2_dev:/root/ros2_ws/test_run ~/Desktop/
-
-**Copy visualization plot:**
-docker cp ros2_dev:/root/ros2_ws/axis_analysis.png ~/Desktop/
-
-**Copy everything at once:**
-
-docker cp ros2_dev:/tmp/axis_logs ~/Desktop/axis_logs
-docker cp ros2_dev:/root/ros2_ws/test_run ~/Desktop/test_run
-docker cp ros2_dev:/root/ros2_ws/axis_analysis.png ~/Desktop/
-
-**View ROS2 system logs inside Docker:**
-
-docker exec -it ros2_dev bash
-ls ~/.ros/log/
-
-
----
-
-## How It Works
-
-### Non-Technical (Analogy)
-Imagine a self-driving car cruising on the highway. If GPS suddenly cuts out (e.g., in a tunnel), the car doesn't slam on the brakes. Instead, it keeps going straight using its internal sensors (like a compass and odometer), and gently resumes normal driving when GPS returns. `axis_reliability` gives your robot this same resilience.
-
-### Technical
-- **State Machine:**  
-  - **NORMAL:** GPS valid, follow navigation commands.
-  - **FALLBACK:** GPS lost, switch to dead reckoning (IMU + odometry).
-  - **RECOVERY:** GPS returns, blend fallback and nav commands for smooth transition.
-- **ROS Topics:**  
-  - Subscribes: `/fix` (NavSatFix), `/imu/data` (Imu), `/odom` (Odometry), `/cmd_vel_nav` (Twist)
-  - Publishes: `/cmd_vel` (Twist), `/axis/status` (String)
-- **Control Logic:**  
-  - Detects GPS validity using status and message age.
-  - Maintains heading and velocity during fallback.
-  - Blends velocities during recovery to avoid jumps.
-
----
-
-## Configuration
-
-Edit `config/axis_reliability.yaml`:
-
-```yaml
-axis_reliability:
-  ros__parameters:
-    # GPS validation
-    n_bad_gps_threshold: 10          # Consecutive bad GPS to trigger fallback
-    m_good_gps_threshold: 5          # Consecutive good GPS to trigger recovery
-    gps_age_max_s: 2.0               # Max message age before considered stale
-
-    # Fallback behavior
-    fallback_linear_velocity: 0.3    # m/s during dead reckoning
-    fallback_max_duration_s: 30.0    # Safety timeout (seconds)
-    heading_correction_kp: 0.5       # Proportional gain for heading correction
-    max_angular_correction: 0.1      # Max angular velocity (rad/s)
-
-    # Recovery
-    recovery_blend_duration_s: 2.5   # Seconds to blend back to nav
-
-    # Logging
-    enable_csv_logging: true
-    log_directory: "/tmp/axis_logs"
+source install/setup.zsh
 ```
 
-**Tuning advice:**  
-Start with conservative thresholds (higher `n_bad_gps_threshold`, lower velocities). Gradually decrease thresholds and increase fallback speed as confidence grows.
+---
+
+## How to Run
+
+### Option 1 — Run the Node Directly
+
+If your robot already provides `/fix`, `/imu`, `/odom`, and `/cmd_vel_nav`:
+
+```bash
+ros2 run axis_reliability axis_reliability
+```
+
+Or run with parameters:
+
+```bash
+ros2 launch axis_reliability axis.launch.py
+```
+
+This loads parameters from:
+
+```
+config/axis_reliability.yaml
+```
 
 ---
 
-## Integration Guide
+## Simulation (with Fake GPS)
 
-**Required sensors:**
-- GPS receiver (publishing `sensor_msgs/NavSatFix` to `/fix`)
-- IMU (publishing `sensor_msgs/Imu` to `/imu/data`)
-- Odometry (publishing `nav_msgs/Odometry` to `/odom`)
+The `sim.launch.py` file launches:
+- TurtleBot3 + orchard world in Gazebo
+- `axis_reliability` node
+- `odom_to_fix.py` (converts `/odom` → `/fix`)
 
-**ROS topic mapping:**
-- Navigation stack should publish velocity commands to `/cmd_vel_nav`
-- Robot base should subscribe to `/cmd_vel` (output of this node)
+### Run Everything in One Go
 
-**Compatibility:**
-- Works with any GPS that sets `status.status` (RTK, DGPS, etc.)
-- For best results, use GPS with low-latency and accurate status reporting
+```bash
+ros2 launch axis_reliability sim.launch.py
+```
+
+This will:
+- Start Gazebo
+- Run your reliability node
+- Simulate GPS messages from odometry
+
+### Run Components Manually
+
+**Terminal 1: Launch Gazebo world**
+
+```bash
+ros2 launch turtlebot3_gazebo turtlebot3_world.launch.py world:=~/ros2_ws/src/orchard_world/worlds/orchard.world
+```
+
+**Terminal 2: Run fake GPS node**
+
+```bash
+python3 ~/ros2_ws/src/axis_reliability/fake_sensors/odom_to_fix.py
+```
+
+**Terminal 3: Start your reliability node**
+
+```bash
+ros2 launch axis_reliability axis.launch.py
+```
+
+---
+
+## Running Without Fake GPS (Field Test)
+
+For field tests or indoor robots without GPS:
+
+1. Robot provides:
+   - `/imu/data` (`sensor_msgs/Imu`)
+   - `/odom` (`nav_msgs/Odometry`)
+   - `/cmd_vel_nav` from navigation stack
+   - `/cmd_vel` for actual motion
+
+2. You run:
+
+```bash
+ros2 launch axis_reliability axis.launch.py
+```
+
+3. If no GPS is available, mock it with:
+
+```bash
+python3 ~/ros2_ws/src/axis_reliability/fake_sensors/odom_to_fix.py
+```
+
+This creates a `/fix` topic from odometry so your node behaves as if GPS were present.
+
+---
+
+## Topics Overview
+
+| Topic | Type | Direction | Description |
+|-------|------|-----------|-------------|
+| `/fix` | `sensor_msgs/NavSatFix` | Subscribed | GPS fix (real or fake) |
+| `/imu` | `sensor_msgs/Imu` | Subscribed | Orientation and heading |
+| `/odom` | `nav_msgs/Odometry` | Subscribed | Odometry data |
+| `/cmd_vel_nav` | `geometry_msgs/Twist` | Subscribed | Navigation velocity commands |
+| `/cmd_vel` | `geometry_msgs/Twist` | Published | Velocity output (possibly filtered) |
+| `/axis/status` | `std_msgs/String` | Published | `NORMAL`, `FALLBACK`, or `RECOVERY` |
+
+---
+
+## Parameters
+
+Defaults are specified in `config/axis_reliability.yaml`:
+
+| Name | Default | Description |
+|------|---------|-------------|
+| `n_bad_gps_threshold` | 10 | Consecutive bad/stale GPS samples to enter FALLBACK |
+| `m_good_gps_threshold` | 5 | Consecutive good samples to start RECOVERY |
+| `gps_age_max_s` | 2.0 | Max allowed GPS message age (seconds) |
+| `fallback_linear_velocity` | 0.3 | Linear velocity (m/s) in FALLBACK mode |
+| `fallback_max_duration_s` | 30.0 | Hard timeout in FALLBACK before ABORT |
+| `heading_correction_kp` | 0.5 | Proportional gain to hold heading |
+| `max_angular_correction` | 0.1 | Angular velocity clamp (rad/s) in FALLBACK |
+| `recovery_blend_duration_s` | 2.5 | Duration (seconds) to blend FALLBACK→NAV |
+| `enable_csv_logging` | true | Enable CSV log output |
+| `log_directory` | `/tmp/axis_logs` | Path for CSV logs |
+
+---
+## Field Test Checklist
+
+- Robot publishes `/imu/data`, `/odom`, and `/cmd_vel_nav`
+- Base controller listens on `/cmd_vel`
+- GPS or fake GPS publishes `/fix`
+- ROS 2 Humble sourced on both machines
+- Network or ROS 2 domain configured if running across machines
+- Verify topics with `ros2 topic list`
+- Check node state:
+
+```bash
+ros2 topic echo /axis/status
+```
+
+---
+
+## Repo Structure
+
+```
+axis_reliability/
+├── axis_reliability/          # Node logic
+│   ├── axis_reliability_node.py
+│   ├── analyze_bag.py
+│   └── generate_test_bag.py
+├── config/
+│   └── axis_reliability.yaml  # Parameters
+├── fake_sensors/
+│   └── odom_to_fix.py         # Fake GPS from odometry
+├── launch/
+│   ├── axis.launch.py         # Node only
+│   └── sim.launch.py          # Node + Gazebo + fake GPS
+├── tests/
+│   └── test_state_machine.py
+├── README.md
+├── package.xml
+├── setup.py
+└── setup.cfg
+```
 
 ---
 
 ## Troubleshooting
 
-1. **No state transitions observed**
-   - Check that `/fix`, `/imu/data`, `/odom`, and `/cmd_vel_nav` are being published
-   - Use:  
-     ```bash
-     ros2 topic echo /axis/status
-     ```
-2. **Robot stops during fallback**
-   - Verify IMU and odometry data are fresh (not stale)
-   - Check logs for "IMU data stale - ABORTING"
-3. **Bag analysis script fails**
-   - Ensure `rosbag2_py` and `matplotlib` are installed
-   - Use:  
-     ```bash
-     pip install matplotlib
-     sudo apt install ros-humble-rosbag2-py
-     ```
-4. **Velocity jumps on recovery**
-   - Tune `recovery_blend_duration_s` higher for smoother transitions
+**Gazebo world not found:** Edit `sim.launch.py` to point to the correct orchard world path.
 
----
+**No `/fix` topic:** Run the fake GPS script manually:
 
-## Performance Metrics
+```bash
+python3 fake_sensors/odom_to_fix.py
+```
 
-- **Fallback velocity maintained:** 0.3 m/s (average) during GPS loss (target: 0.5 m/s)
-- **Lateral drift during fallback:** <3 meters (synthetic test)
-- **Recovery blend duration:** 2.5 seconds (configurable)
-- **State transition latency:** ~1.0 seconds (10 consecutive bad readings at 10Hz)
-- **Test scenario:** 30s synthetic run, 15s GPS dropout
+**No `/axis/status` updates:** Check that `/fix` and `/imu` are publishing messages.
 
----
+**GPS marked invalid:** Ensure your fake GPS uses `status: 2` (RTK-fixed). Adjust in `odom_to_fix.py` if needed.
 
-## Project Status
+## Logs & Data
 
-- **Current:**  
-  - Working MVP with synthetic testing
-  - Visualization and analysis tools included
-  - **Not yet tested on real hardware**
-- **Next steps:**  
-  - Field test on Farm-ng Amiga platform
-  - Tune parameters with real sensor data
-- **Future plans:**  
-  - Adaptive fallback strategies
-  - Integration with more navigation stacks
+**CSV logs:**  
+Default path → `/tmp/axis_logs/axis_reliability_log.csv`  
 
----
+Copy to your machine:
+```bash
+scp <user>@<robot_ip>:/tmp/axis_logs/axis_reliability_log.csv .
+Record topics (optional):
 
-## Technical Details
+bash
+Copy code
+ros2 bag record /fix /imu /odom /cmd_vel /axis/status
+Copy bag:
 
-- **Language:** Python 3.10+
-- **Framework:** ROS 2 Humble, ament_python
-- **Dependencies:**
-  - rclpy
-  - sensor_msgs, nav_msgs, geometry_msgs, std_msgs
-  - transforms3d
-  - matplotlib
-  - ros2bag, rosbag2_py
-  - python3-pytest (for tests)
-
----
-
-## Contributing
-
-- Fork the repo and create a feature branch
-- Follow ROS 2 Python style guidelines
-- Add/extend tests for new features
-- Open a pull request with a clear description
-
----
-
-## License
-
-Apache 2.0
-
----
-
-## Contact
-
-For help, open an issue on GitHub or email the maintainer at [jri8@cornell.edu](mailto:jri@cornell.edu).
+bash
+Copy code
+scp -r <user>@<robot_ip>:~/rosbags/<bag_folder> .

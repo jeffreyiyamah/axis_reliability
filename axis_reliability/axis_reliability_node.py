@@ -90,7 +90,7 @@ class AxisReliabilityNode(Node):
         )
         self.create_subscription(
             Imu,
-            '/imu/data',
+            '/imu',
             self.imu_callback,
             QoSProfile(depth=50, reliability=ReliabilityPolicy.BEST_EFFORT)
         )
@@ -122,6 +122,17 @@ class AxisReliabilityNode(Node):
         # Control loop timer (10 Hz)
         self.create_timer(0.1, self.control_loop)
         self.get_logger().info('AxisReliabilityNode initialized')
+
+    def _enter_fallback(self, now):
+        self.state = SystemState.FALLBACK
+        self.fallback_start_time = now
+        self.last_known_heading = self.get_heading_from_imu()
+        lat = getattr(self.last_gps_msg, "latitude", float("nan"))
+        lon = getattr(self.last_gps_msg, "longitude", float("nan"))
+        self.get_logger().info(
+            f"STATE: NORMAL → FALLBACK (dead reckoning engaged) | "
+            f"last_fix: lat={lat:.6f}, lon={lon:.6f}, heading={self.last_known_heading:.3f}"
+        )
 
     def gps_callback(self, msg: NavSatFix) -> None:
         self.last_gps_msg = msg
@@ -184,17 +195,77 @@ class AxisReliabilityNode(Node):
 
     def control_loop(self) -> None:
         now = self.get_clock().now()
+        
         # Safety aborts
         if self.should_abort():
             self.publish_zero_velocity()
             return
-        # State machine
+        
+        # --- GPS staleness check ---
+        gps_age = float("inf")
+        if self.last_gps_time:
+            gps_age = (now - self.last_gps_time).nanoseconds / 1e9
+        
+        if self.state == SystemState.NORMAL:
+            if gps_age > self.gps_age_max_s:
+                self.bad_gps_count += 1
+                self.good_gps_count = 0
+                # Throttled warning
+                if not hasattr(self, "_last_gps_warn_time"):
+                    self._last_gps_warn_time = now
+                if (now - self._last_gps_warn_time).nanoseconds / 1e9 > 0.5:
+                    self._last_gps_warn_time = now
+                    self.get_logger().warn(
+                        f"GPS stale: age={gps_age:.2f}s "
+                        f"(bad={self.bad_gps_count}/{self.n_bad_gps_threshold})"
+                    )
+            else:
+                self.bad_gps_count = 0
+            
+            # Threshold reached -> fallback
+            if self.bad_gps_count >= self.n_bad_gps_threshold:
+                self._enter_fallback(now)
+        
+        # --- State machine ---
         if self.state == SystemState.NORMAL:
             cmd = self.last_nav_cmd if self.last_nav_cmd else Twist()
             heading_error = 0.0
+
+            if not hasattr(self, "_last_normal_info_time"):
+                self._last_normal_info_time = now
+            if (now - self._last_normal_info_time).nanoseconds / 1e9 > 10.0:
+                self._last_normal_info_time = now
+                gps_status = self.last_gps_msg.status.status if self.last_gps_msg else -1
+                lat = self.last_gps_msg.latitude if self.last_gps_msg else float('nan')
+                lon = self.last_gps_msg.longitude if self.last_gps_msg else float('nan')
+                self.get_logger().info(
+                    f"NORMAL: GPS OK (status={gps_status}, age={gps_age:.2f}s) | "
+                    f"pos: {lat:.6f}, {lon:.6f} | v={cmd.linear.x:.2f}"
+                )
+            
         elif self.state == SystemState.FALLBACK:
             cmd = self.compute_fallback_command()
             heading_error = self.compute_heading_error()
+            
+            # FALLBACK heartbeat
+            if not hasattr(self, "_last_fb_info_time"):
+                self._last_fb_info_time = now
+            if (now - self._last_fb_info_time).nanoseconds / 1e9 > 1.0:
+                self._last_fb_info_time = now
+                self.get_logger().info(
+                    f"FALLBACK active: v={cmd.linear.x:.2f} rad/s={cmd.angular.z:.2f} "
+                    f"(gps_age={gps_age:.2f}s)"
+                )
+            
+            # Safety timeout
+            if self.fallback_start_time:
+                dur = (now - self.fallback_start_time).nanoseconds / 1e9
+                if dur > self.fallback_max_duration_s:
+                    self.get_logger().error(f"Fallback timeout ({dur:.2f}s) - ABORTING")
+                    self.publish_zero_velocity()
+                    return
+                    
+            
         elif self.state == SystemState.RECOVERY:
             cmd = self.compute_recovery_command()
             heading_error = self.compute_heading_error()
@@ -205,13 +276,16 @@ class AxisReliabilityNode(Node):
         else:
             cmd = Twist()
             heading_error = 0.0
+        
         # Publish
         self.cmd_vel_pub.publish(cmd)
+        
         # Publish status
         status = String()
         status.data = self.state.value
         self.status_pub.publish(status)
-        # Log to CSV if enabled
+        
+        # Log to CSV
         if self.enable_csv_logging:
             self.log_to_csv(cmd, heading_error)
 
@@ -301,6 +375,7 @@ class AxisReliabilityNode(Node):
             heading_error
         ])
         self.csv_file.flush()
+    
 
 def main(args=None):
     rclpy.init(args=args)

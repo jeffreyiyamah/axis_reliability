@@ -11,7 +11,7 @@ setup(
     data_files=[
         ('share/ament_index/resource_index/packages', ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
-        ('share/' + package_name + '/launch', ['launch/axis_demo.launch.py']),
+        ('share/' + package_name + '/launch', ['launch/axis.launch.py','launch/sim.launch.py']),
         ('share/' + package_name + '/config', ['config/axis_reliability.yaml']),
         ('share/' + package_name + '/scripts', glob('scripts/*.py')),
     ],
