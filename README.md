@@ -314,4 +314,4 @@ scp -r <user>@<robot_ip>:~/rosbags/<bag_folder> .
 ## Demo Video
 Check out this video demo!
 
-![Demo Video](media/Axis_GPS_Dropout_Demo.mp4)
+[![Watch the demo](media/axis_dropout.jpg)](media/Axis_GPS_Dropout_Demo.mp4)
