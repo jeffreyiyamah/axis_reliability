@@ -12,7 +12,7 @@ axis_reliability:
     max_angular_correction: 0.1      # rad/s max correction
 
     # Recovery
-    recovery_blend_duration_s: 2.5   # seconds to blend back to nav
+    recovery_blend_duration_s: 1.5   # seconds to blend back to nav
 
     # Logging
     enable_csv_logging: true

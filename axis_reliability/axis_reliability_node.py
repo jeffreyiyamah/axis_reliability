@@ -9,6 +9,7 @@ from std_msgs.msg import String
 from transforms3d.euler import quat2euler
 from rclpy.time import Time
 import math
+from sensor_msgs.msg import NavSatStatus
 import os
 from axis_reliability.axis_metrics import AxisMetrics
 import csv
@@ -129,6 +130,7 @@ class AxisReliabilityNode(Node):
         self.timer = self.create_timer(0.1, self.control_loop)
         self.get_logger().info('AxisReliabilityNode initialized')
 
+
     def _enter_fallback(self, now):
         self.metrics.start_fallback(now)
         self.state = SystemState.FALLBACK
@@ -165,15 +167,18 @@ class AxisReliabilityNode(Node):
                 )
         elif self.state == SystemState.FALLBACK:
             if self.good_gps_count >= self.m_good_gps_threshold:
-                # Transition to RECOVERY
                 self.recovery_start_time = self.get_clock().now()
                 self.bad_gps_count = 0
                 self.state = SystemState.RECOVERY
+                if self.fallback_start_time:
+                    downtime_s = (self.recovery_start_time - self.fallback_start_time).nanoseconds / 1e9
+                else:
+                    downtime_s = 0.0
+                self.metrics.mark_recovery(self.recovery_start_time, downtime_s)
+
                 duration = (self.recovery_start_time - self.fallback_start_time).nanoseconds / 1e9 if self.fallback_start_time else 0.0
                 self.get_logger().info(f"STATE: FALLBACK → RECOVERY | Duration: {duration:.2f}s")
-                self.metrics.finish(self.recovery_start_time, 'RECOVERY')
-
-        # No transitions on RECOVERY here (handled in control_loop)
+               
 
     def imu_callback(self, msg: Imu) -> None:
         self.last_imu_msg = msg
@@ -187,8 +192,12 @@ class AxisReliabilityNode(Node):
         self.last_nav_cmd = msg
 
     def is_gps_valid(self, msg: NavSatFix) -> bool:
-        # Rule 1: status.status == 2 (RTK Fixed)
-        if msg.status.status != 2:
+        valid_statuses = {
+            NavSatStatus.STATUS_FIX,       # 0
+            NavSatStatus.STATUS_SBAS_FIX,  # 1
+            NavSatStatus.STATUS_GBAS_FIX   # 2
+        }
+        if msg.status.status not in valid_statuses:
             return False
         # Rule 2: message age
         age = self.get_gps_age(msg)
@@ -247,15 +256,17 @@ class AxisReliabilityNode(Node):
 
             if not hasattr(self, "_last_normal_info_time"):
                 self._last_normal_info_time = now
-            if (now - self._last_normal_info_time).nanoseconds / 1e9 > 10.0:
+            if (now - self._last_normal_info_time).nanoseconds / 1e9 > 1.0:
                 self._last_normal_info_time = now
                 gps_status = self.last_gps_msg.status.status if self.last_gps_msg else -1
                 lat = self.last_gps_msg.latitude if self.last_gps_msg else float('nan')
                 lon = self.last_gps_msg.longitude if self.last_gps_msg else float('nan')
+                v = self.last_nav_cmd.linear.x if self.last_nav_cmd else 0.0
                 self.get_logger().info(
                     f"NORMAL: GPS OK (status={gps_status}, age={gps_age:.2f}s) | "
-                    f"pos: {lat:.6f}, {lon:.6f} | v={cmd.linear.x:.2f}"
+                    f"pos: {lat:.6f}, {lon:.6f} | v={v:.2f}"
                 )
+
             
         elif self.state == SystemState.FALLBACK:
             cmd = self.compute_fallback_command()
@@ -424,17 +435,35 @@ def main(args=None):
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:
+        # Stop any periodic logging before shutdown
+        node._shutdown_requested = True
+        try:
+            node.timer.cancel()
+        except Exception:
+            pass
+
+        # Last log via ROS logger (still valid here)
         node.get_logger().info("Shutting down — finalizing metrics...")
-        now = node.get_clock().now()
-        # if still in fallback, close it gracefully
+
+        # Do summary/metrics BEFORE destroying the node / shutdown
+        end = node.get_clock().now()
         if node.state == SystemState.FALLBACK:
-            node.metrics.finish(now, 'ABORT', abort_reason='UserInterrupt')
+            node.metrics.finish(end, 'ABORT', abort_reason='UserInterrupt')
+        elif node.state == SystemState.RECOVERY:
+            node.metrics.finish(end, 'RECOVERY')
+        else:
+            node.metrics.finish(end, 'CLEAN_EXIT')
     finally:
+        # Close files and destroy node (no more ROS logging past this point)
         if node.csv_file:
             node.csv_file.close()
         node.destroy_node()
-        rclpy.shutdown()
 
+        # Make shutdown idempotent; ignore if already shut down
+        try:
+            rclpy.shutdown()
+        except Exception:
+            pass
 
 if __name__ == '__main__':
     main()

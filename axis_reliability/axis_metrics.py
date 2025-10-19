@@ -55,6 +55,24 @@ class AxisMetrics:
 
     def finish(self, now, state: str, abort_reason: str = '', handoff_jump_m: float = 0.0):
         if not self.current_episode:
+            if state == 'BASELINE':
+                end_ts = now.nanoseconds / 1e9
+                start_ts = getattr(self, "_start_time", now).nanoseconds / 1e9 if hasattr(self, "_start_time") else end_ts
+                duration = max(0.0, end_ts - start_ts)
+                row = [
+                    end_ts, 'END', 'BASELINE',
+                    None, None,
+                    round(duration, 2),
+                    round(getattr(self, "_avg_heading_error", 0.0), 3),
+                    round(getattr(self, "_max_heading_error", 0.0), 3),
+                    round(getattr(self, "_drift_rate", 0.0) * 100, 2),
+                    round(getattr(self, "_gps_downtime", 0.0), 2),
+                    abort_reason,
+                    0.0, 0.0, 0.0
+                ]
+                with open(self.log_path, 'a', newline='') as f:
+                    csv.writer(f).writerow(row)
+                self.summarize(row)
             return
         end_time = now.nanoseconds / 1e9
         start_time = self.current_episode['fallback_start_time']

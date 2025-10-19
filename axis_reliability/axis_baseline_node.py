@@ -116,8 +116,12 @@ class AxisBaselineNode(Node):
 
     # --- Control loop ---
     def control_loop(self):
+        if not self.last_gps_time:
+            return
         if getattr(self, "_shutdown_requested", False):
             return
+        
+
 
         now = self.get_clock().now()
         gps_age = float('inf')
@@ -177,18 +181,6 @@ class AxisBaselineNode(Node):
             self.log_to_csv(cmd, 0.0)
 
 
-        # Publish status and log
-        status = String()
-        status.data = "BASELINE"
-        self.status_pub.publish(status)
-
-        cmd = Twist()  # no fallback control
-        heading_error = 0.0
-        self.cmd_vel_pub.publish(cmd)
-
-        if self.enable_csv_logging:
-            self.log_to_csv(cmd, heading_error)
-
     def publish_zero_velocity(self):
         cmd = Twist()
         cmd.linear.x = 0.0
@@ -204,8 +196,6 @@ class AxisBaselineNode(Node):
         self.csv_file.flush()
 
     def destroy_node(self):
-        now = self.get_clock().now()
-        self.metrics.finish(now, 'BASELINE')
         if self.csv_file:
             self.csv_file.close()
         super().destroy_node()
@@ -222,14 +212,33 @@ def main(args=None):
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:
+        node._shutdown_requested = True
+        try:
+            node.timer.cancel()
+        except Exception:
+            pass
+
         node.get_logger().info("Shutting down — finalizing baseline metrics...")
-        now = node.get_clock().now()
-        node.metrics.finish(now, 'BASELINE', abort_reason='UserInterrupt')
+
+        end = node.get_clock().now()
+        node.metrics.finish(end, 'BASELINE', abort_reason='UserInterrupt')
+
+        try:
+            node.metrics.print_summary()        # or: print(node.metrics.summary_text())
+        except Exception:
+            pass
     finally:
+        # Close files and destroy node (no ROS logs past this point)
         if node.csv_file:
             node.csv_file.close()
         node.destroy_node()
-        rclpy.shutdown()
+
+        # Make shutdown idempotent (launch may already have called it)
+        try:
+            rclpy.shutdown()
+        except Exception:
+            pass
+
 
 
 if __name__ == '__main__':
