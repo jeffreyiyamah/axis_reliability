@@ -170,23 +170,30 @@ ros2 topic echo /axis/status
 
 ```
 axis_reliability/
-├── axis_reliability/          # Node logic
+├── axis_reliability/          # Core logic
 │   ├── axis_reliability_node.py
 │   ├── analyze_bag.py
-│   └── generate_test_bag.py
+│   ├── generate_test_bag.py
+│   └── __init__.py
+│
 ├── config/
-│   └── axis_reliability.yaml  # Parameters
+│   └── axis_reliability.yaml  # Config parameters
+│
 ├── fake_sensors/
-│   └── odom_to_fix.py         # Fake GPS from odometry
+│   └── odom_to_fix.py         # Optional GPS mock node
+│
 ├── launch/
-│   ├── axis.launch.py         # Node only
-│   └── sim.launch.py          # Node + Gazebo + fake GPS
+│   ├── axis.launch.py         # Main launch file
+│   └── sim.launch.py          # Simulation or fake sensor setup
+│
 ├── tests/
-│   └── test_state_machine.py
-├── README.md
-├── package.xml
-├── setup.py
+│   └── test_state_machine.py 
+│
+├── README.md              
+├── package.xml               
+├── setup.py                  
 └── setup.cfg
+
 ```
 
 ---
@@ -220,6 +227,18 @@ This node uses the same topics as the main reliability node (`/fix`, `/imu`, `/o
 ### CSV Output
 
 Saved as `/tmp/axis_logs/axis_baseline_log.csv`
+
+MacOS:
+
+⌘ + Shift + G  (Go → Go to Folder…)
+
+Type: /private/tmp/axis_logs
+
+Windows:
+
+Press Win + R
+Type %TEMP%\axis_logs
+
 
 ---
 
