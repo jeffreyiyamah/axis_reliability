@@ -11,7 +11,7 @@ setup(
     data_files=[
         ('share/ament_index/resource_index/packages', ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
-        ('share/' + package_name + '/launch', ['launch/axis.launch.py','launch/sim.launch.py']),
+        ('share/' + package_name + '/launch', ['launch/axis.launch.py','launch/sim.launch.py', 'launch/baseline.launch.py']),
         ('share/' + package_name + '/config', ['config/axis_reliability.yaml']),
         ('share/' + package_name + '/scripts', glob('scripts/*.py')),
     ],
@@ -27,6 +27,7 @@ setup(
             'axis_reliability = axis_reliability.axis_reliability_node:main',
             'generate_test_data = axis_reliability.generate_test_bag:main',
             'analyze_bag = axis_reliability.analyze_bag:main',
+            'axis_baseline = axis_reliability.axis_baseline_node:main',
         ],
     },
 )

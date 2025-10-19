@@ -10,6 +10,7 @@ from transforms3d.euler import quat2euler
 from rclpy.time import Time
 import math
 import os
+from axis_reliability.axis_metrics import AxisMetrics
 import csv
 from typing import Optional
 
@@ -69,6 +70,11 @@ class AxisReliabilityNode(Node):
         self.enable_csv_logging = self.get_parameter('enable_csv_logging').value
         self.log_directory = self.get_parameter('log_directory').value
 
+        self.metrics = AxisMetrics(self.log_directory)
+        self._shutdown_requested = False
+
+
+
         # CSV logging
         self.csv_writer = None
         self.csv_file = None
@@ -120,10 +126,11 @@ class AxisReliabilityNode(Node):
         )
 
         # Control loop timer (10 Hz)
-        self.create_timer(0.1, self.control_loop)
+        self.timer = self.create_timer(0.1, self.control_loop)
         self.get_logger().info('AxisReliabilityNode initialized')
 
     def _enter_fallback(self, now):
+        self.metrics.start_fallback(now)
         self.state = SystemState.FALLBACK
         self.fallback_start_time = now
         self.last_known_heading = self.get_heading_from_imu()
@@ -164,6 +171,8 @@ class AxisReliabilityNode(Node):
                 self.state = SystemState.RECOVERY
                 duration = (self.recovery_start_time - self.fallback_start_time).nanoseconds / 1e9 if self.fallback_start_time else 0.0
                 self.get_logger().info(f"STATE: FALLBACK → RECOVERY | Duration: {duration:.2f}s")
+                self.metrics.finish(self.recovery_start_time, 'RECOVERY')
+
         # No transitions on RECOVERY here (handled in control_loop)
 
     def imu_callback(self, msg: Imu) -> None:
@@ -194,6 +203,9 @@ class AxisReliabilityNode(Node):
         return (now - msg_time).nanoseconds / 1e9
 
     def control_loop(self) -> None:
+        if getattr(self, "_shutdown_requested", False):
+            return
+
         now = self.get_clock().now()
         
         # Safety aborts
@@ -210,6 +222,8 @@ class AxisReliabilityNode(Node):
             if gps_age > self.gps_age_max_s:
                 self.bad_gps_count += 1
                 self.good_gps_count = 0
+                if self.bad_gps_count == self.n_bad_gps_threshold - 1:
+                    self.metrics.mark_degrade(now)
                 # Throttled warning
                 if not hasattr(self, "_last_gps_warn_time"):
                     self._last_gps_warn_time = now
@@ -246,29 +260,57 @@ class AxisReliabilityNode(Node):
         elif self.state == SystemState.FALLBACK:
             cmd = self.compute_fallback_command()
             heading_error = self.compute_heading_error()
-            
-            # FALLBACK heartbeat
-            if not hasattr(self, "_last_fb_info_time"):
-                self._last_fb_info_time = now
-            if (now - self._last_fb_info_time).nanoseconds / 1e9 > 1.0:
-                self._last_fb_info_time = now
-                self.get_logger().info(
-                    f"FALLBACK active: v={cmd.linear.x:.2f} rad/s={cmd.angular.z:.2f} "
-                    f"(gps_age={gps_age:.2f}s)"
-                )
-            
-            # Safety timeout
+
             if self.fallback_start_time:
                 dur = (now - self.fallback_start_time).nanoseconds / 1e9
+                remaining = self.fallback_max_duration_s - dur
+                warn_start = 0.8 * self.fallback_max_duration_s
+
+                # --- Log heartbeat until warn phase ---
+                if dur < warn_start:
+                    if not hasattr(self, "_last_fb_info_time"):
+                        self._last_fb_info_time = now
+                    if (now - self._last_fb_info_time).nanoseconds / 1e9 > 1.0:
+                        self._last_fb_info_time = now
+                        self.get_logger().info(
+                            f"FALLBACK active: v={cmd.linear.x:.2f} rad/s={cmd.angular.z:.2f} "
+
+                        )
+
+                # --- Countdown after 80% ---
+                elif dur >= warn_start and remaining > 0:
+                    secs_left = int(remaining)
+                    if secs_left != getattr(self, "_last_warn_secs", None):
+                        self.get_logger().warn(
+                            f"Robot aborting in: {secs_left:02d}.0s "
+                            f"(elapsed {dur:.1f}/{self.fallback_max_duration_s:.1f}s)"
+                        )
+                        self._last_warn_secs = secs_left
+
+                # --- Final abort ---
                 if dur > self.fallback_max_duration_s:
-                    self.get_logger().error(f"Fallback timeout ({dur:.2f}s) - ABORTING")
-                    self.publish_zero_velocity()
+                    if not getattr(self, "_abort_logged", False):
+                        self.get_logger().error(
+                            f"ABORT: Fallback timeout at ({dur:.2f}s) — Robot stopping safely."
+                        )
+                        self.metrics.finish(now, 'ABORT', abort_reason='Timeout')
+                        self.publish_zero_velocity()
+                        self._abort_logged = True
+                        self._shutdown_requested = True
+                        try:
+                            self.timer.cancel()
+                        except Exception:
+                            pass
                     return
+
+
                     
             
         elif self.state == SystemState.RECOVERY:
             cmd = self.compute_recovery_command()
             heading_error = self.compute_heading_error()
+            
+
             # RECOVERY → NORMAL
             if self.recovery_start_time and (now - self.recovery_start_time).nanoseconds / 1e9 >= self.recovery_blend_duration_s:
                 self.state = SystemState.NORMAL
@@ -294,17 +336,16 @@ class AxisReliabilityNode(Node):
         # Check sensor staleness
         if self.last_imu_msg and self.last_imu_time and (now - self.last_imu_time).nanoseconds / 1e9 > 1.0:
             self.get_logger().error("IMU data stale - ABORTING")
+            self.metrics.finish(now, 'ABORT', abort_reason='IMU stale')
             return True
+
         if self.last_odom_msg and self.last_odom_time and (now - self.last_odom_time).nanoseconds / 1e9 > 1.0:
             self.get_logger().error("Odom data stale - ABORTING")
+            self.metrics.finish(now, 'ABORT', abort_reason='Odom stale')
             return True
-        # Check fallback timeout
-        if self.state == SystemState.FALLBACK and self.fallback_start_time:
-            duration = (now - self.fallback_start_time).nanoseconds / 1e9
-            if duration > self.fallback_max_duration_s:
-                self.get_logger().error(f"Fallback timeout ({duration:.2f}s) - ABORTING")
-                return True
+
         return False
+
 
     def publish_zero_velocity(self) -> None:
         cmd = Twist()
@@ -380,11 +421,20 @@ class AxisReliabilityNode(Node):
 def main(args=None):
     rclpy.init(args=args)
     node = AxisReliabilityNode()
-    rclpy.spin(node)
-    if node.csv_file:
-        node.csv_file.close()
-    node.destroy_node()
-    rclpy.shutdown()
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        node.get_logger().info("Shutting down — finalizing metrics...")
+        now = node.get_clock().now()
+        # if still in fallback, close it gracefully
+        if node.state == SystemState.FALLBACK:
+            node.metrics.finish(now, 'ABORT', abort_reason='UserInterrupt')
+    finally:
+        if node.csv_file:
+            node.csv_file.close()
+        node.destroy_node()
+        rclpy.shutdown()
+
 
 if __name__ == '__main__':
     main()
